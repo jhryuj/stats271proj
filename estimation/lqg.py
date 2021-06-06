@@ -73,7 +73,7 @@ class LQG(object):
 
             # make into a list
             x_n     = [x_tp1] # x0 already
-            z_n  = []
+            z_n     = []
             u_n     = []
             t_n     = []
             y_n     = []
@@ -154,7 +154,7 @@ class LQG(object):
         yt          = yt_mean + SA @ sa
 
         # perception
-        zt_mean     = dyn.A @ xt + dyn.B @ utm1_mean + \
+        zt_mean     = dyn.A @ ztm1 + dyn.B @ utm1_mean + \
                       currKt[None, :, :] @ (yt - dyn.H @ ztm1)
         zt          = zt_mean + EA @ ea # todo: check if the equations are okay with estimation noise
 

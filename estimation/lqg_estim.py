@@ -19,13 +19,100 @@ alldtypes   = tf.dtypes.float32
 dyn         = hand1D(hand1D_params(),dtype=alldtypes)
 lqg         = LQG(dyn, clip_gradients = False, debug = DEBUG)
 conds       = 1 # number of conditions (sensory parameters to generate)
-batchsize   = 10
-Niter       = 2
+batchsize   = 30
+Niter       = 2 # number of random model initializations to test
 
 runEM = EM_estimation(debug=DEBUG)
 
+############################ check if the thing works first ############################
 for true_sa in [0.25,0.5,0.75,1,1.5,2]:
-    ############################ check if the thing works first ############################
+    trainset = {}
+    trainset['obs'] = observer(N=conds,
+                               ca=0.1, r=0.001, sa=[true_sa],
+                               scope='observer', dtype=alldtypes)
+    print('Data (true) parameters:')
+    trainset['obs'].printVariables()
+
+    x, xhat, u, tt = \
+        lqg.simulate(dyn, trainset['obs'], batch_size=batchsize)
+    # fix stimulus trajectories to be the same across the parameter initializations
+    x, xhat, u, tt = \
+        lqg.simulate(dyn, trainset['obs'], x_fix=[x[0]], batch_size=batchsize)
+    trainset['x']       = x
+    trainset['xhat']    = xhat
+    trainset['u']       = u
+
+    max_lplikelist, max_lptranslist, max_lplike, max_lptrans = \
+        runEM.prob_latent_generative(trainset, trainset['obs'], dyn)
+
+    random_lplikes = []
+    random_lptrans = []
+    params = []
+    # build a model observer
+    for iter in trange(50):
+        model = observer(N = conds,
+                         ca=0.1, r=0.001, sa=None,
+                         scope = 'model', dtype = alldtypes)
+
+        rand_lplikelist, rand_lptranslist, rand_lplike, rand_lptrans = \
+            runEM.prob_latent_generative(trainset, model, dyn)
+
+        for v in model.trainable_variables:
+            if 'log_sa' in v.name:
+                sa = tf.math.exp(v).numpy().item()
+
+        params         += [sa]
+        random_lplikes += [rand_lplike]
+        random_lptrans += [rand_lptrans]
+
+        if DEBUG and False:
+            plt.figure(figsize=(10, 8))
+            plt.subplot(2, 1, 1)
+            plt.plot(rand_lplikelist[0][:, 0, 0],'b',alpha = 0.4, label= 'random')
+            plt.plot(max_lplikelist[0][:, 0, 0],'r', alpha = 0.4,label='true')
+            plt.title('Likelihood')
+            plt.xlabel('Timeframe')
+            plt.ylabel('neg log prob')
+
+            plt.subplot(2, 1, 2)
+            plt.plot(rand_lptranslist[0][:, 0, 0], 'b',alpha = 0.4, label= 'random')
+            plt.plot(max_lptranslist[0][:, 0, 0], 'r', alpha = 0.4,label= 'true')
+            plt.title('Transition')
+            plt.xlabel('Timeframe')
+            plt.ylabel('log prob')
+            plt.show()
+
+    if DEBUG and True:
+        plt.figure()
+        plt.subplot(1, 2, 1)
+        plt.title('Likelihood logprob')
+        plt.scatter(params, random_lplikes, 20, 'b', label='Random parameters')
+        plt.axvline(x=true_sa, color='r', label='True parameter')
+        plt.axhline(y=max_lplike, color='r')
+        plt.xlabel('Sensory uncertainty')
+        plt.ylabel('log prob')
+        range = np.quantile(random_lplikes, 0.90) - np.quantile(random_lplikes, 0.1)
+        plt.ylim([np.quantile(random_lplikes, 0.1) - range / 10,
+                  np.quantile(random_lplikes, 0.90) + range / 10])
+        plt.xlim([0, 2])
+
+        plt.subplot(1, 2, 2)
+        plt.title('Transition logprob')
+        plt.scatter(params, random_lptrans, 20, 'b', label='Random parameters')
+        plt.axvline(x=true_sa, color='r', label='True parameter')
+        plt.axhline(y=max_lptrans, color='r')
+        plt.xlabel('Sensory uncertainty')
+        plt.ylabel('log prob')
+        range = np.quantile(random_lptrans, 0.90) - np.quantile(random_lptrans, 0.1)
+        plt.ylim([np.quantile(random_lptrans, 0.1) - range / 10,
+                  np.quantile(random_lptrans, 0.90) + range / 10])
+        plt.xlim([0, 2])
+        plt.legend()
+        plt.show()
+
+############################ check if the thing works first ############################
+# elbos and logp of marginals
+for true_sa in [0.25,0.5,0.75,1,1.5,2]:
     # generate training set
     trainset = {}
     trainset['obs'] = observer(N=conds,
@@ -35,17 +122,22 @@ for true_sa in [0.25,0.5,0.75,1,1.5,2]:
     trainset['obs'].printVariables()
     x, xhat, u, tt = \
         lqg.simulate(dyn, trainset['obs'], batch_size=batchsize)
+    # fix stimulus trajectories to be the same across the parameter initializations
     x, xhat, u, tt = \
         lqg.simulate(dyn, trainset['obs'], x_fix=[x[0]], batch_size=batchsize)
     trainset['x'] = x
     trainset['xhat'] = xhat
     trainset['u'] = u
 
+    # calculate filter
+    obsparams = trainset['obs'].generateParamMat(dyn, n=0)
+    obs_K, obs_L = lqg.calculateFilters(obsparams, dyn)
+
     # Check elbo of the data and true parameters
-    max_res = runEM.calculate_apprx_elbo(trainset, dyn, trainset['obs'])
-    max_exp = max_res['expectations']
-    max_elbo = max_res['elbo']
-    max_logpz = runEM.prob_latent(max_res['expectations'], xhat, dyn)
+    max_res     = runEM.calculate_apprx_elbo(trainset, dyn, trainset['obs'])
+    max_exp     = max_res['expectations']
+    max_elbo    = max_res['elbo']
+    max_logpz,_ = runEM.prob_latent(max_res['expectations'], xhat, dyn)
 
     elbos   = []
     params  = []
@@ -92,9 +184,7 @@ for true_sa in [0.25,0.5,0.75,1,1.5,2]:
         # model.printVariables()
 
         # check that the filters are different
-        obsparams = trainset['obs'].generateParamMat(dyn, n=0)
         modelparams = model.generateParamMat(dyn, n=0)
-        obs_K, obs_L = lqg.calculateFilters(obsparams, dyn)
         mod_K, mod_L = lqg.calculateFilters(modelparams, dyn)
 
         # plot filters
@@ -118,7 +208,7 @@ for true_sa in [0.25,0.5,0.75,1,1.5,2]:
         rand_res    = runEM.calculate_apprx_elbo(trainset, dyn, model)
         rand_exp    = rand_res['expectations']
         rand_elbo   = rand_res['elbo']
-        rand_logpz = runEM.prob_latent(rand_res['expectations'], xhat, dyn)
+        rand_logpz,_  = runEM.prob_latent(rand_res['expectations'], xhat, dyn)
 
         for v in model.trainable_variables:
             if 'log_sa' in v.name:
@@ -323,6 +413,7 @@ for true_sa in [0.25,0.5,0.75,1,1.5,2]:
     range = np.quantile(elbos,0.90) - np.quantile(elbos,0.1)
     plt.ylim([np.quantile(elbos,0.1) - range/10,
               np.quantile(elbos,0.90)+range/10])
+    plt.xlim([0, 2])
 
     plt.subplot(1,2,2)
     plt.title('log prob of true perception')
@@ -331,95 +422,98 @@ for true_sa in [0.25,0.5,0.75,1,1.5,2]:
     plt.axhline(y = max_logpz, color='r')
     plt.xlabel('Sensory uncertainty')
     plt.ylabel('log prob of true perception')
+    range = np.quantile(logpz, 0.90) - np.quantile(logpz, 0.1)
     plt.ylim([np.quantile(logpz, 0.1) - range / 10,
               np.quantile(logpz, 0.90) + range / 10])
+    plt.xlim([0,2])
     plt.legend()
 
     plt.show()
 
 ############################ train some models ############################
-# trainset = {}
-# trainset['obs'] = observer(N=conds,
-#                            ca=0.1, r=0.001, sa=[0.5, 1, 2],
-#                            scope='observer', dtype=alldtypes)
-# x, xhat, u, tt = \
-#     lqg.simulate(dyn, trainset['obs'], batch_size=batchsize)
-# x, xhat, u, tt = \
-#     lqg.simulate(dyn, trainset['obs'], x_fix=[x[0]], batch_size=batchsize)
-# trainset['x'] = x
-# trainset['xhat'] = xhat
-# trainset['u'] = u
-#
-# allmodels = []
-# allelbos   = []
-#
-# print('True parameters: ')
-# trainset['obs'].printVariables()
-#
-# max_res = runEM.calculate_apprx_elbo(trainset, dyn, trainset['obs'])
-# max_exp = max_res['expectations']
-# max_elbo = max_res['elbo']
-# max_logpz = runEM.prob_latent(max_res['expectations'], xhat, dyn)
-#
-# Niters_mstep = 3
-# for iter in range(Niter):
-#     # build a model observer
-#     model = observer(N=conds,ca=0.1, r=0.001, sa=None,
-#                      scope='model', dtype=alldtypes)
-#     print('Model initial parameters: ')
-#     model.printVariables()
-#
-#     # run EM Algorithm
-#     elbos = runEM(trainset, dyn, model, lr=0.1,
-#                   Niters=5, Niters_mstep=Niters_mstep)
-#
-#     # plot elbos
-#     plt.figure(figsize=(15, 8))
-#     plt.title('Elbo')
-#     plt.plot(np.arange(len(elbos)) / Niters_mstep, elbos,
-#              'b', label= 'trained model')
-#     plt.plot(np.arange(len(elbos)) / Niters_mstep, [max_elbo] * len(elbos),
-#              'r', label='true model')
-#     plt.xlabel('Iterations')
-#     plt.ylabel('Elbo per timepoint')
-#     plt.legend()
-#     plt.show()
-#
-#     print('Recovered parameters: ')
-#     model.printVariables()
-#
-#     allmodels += [model]
-#     allelbos += [elbos]
-#
-#
-# nparams         =  len(trainset['obs'].trainable_variables)
-# keys_obs        = [v.name for v in trainset['obs'].trainable_variables]
-# vals_obs        = [v.numpy().item() for v in trainset['obs'].trainable_variables]
-# paramvals       = [[v.numpy().item() for v in m.trainable_variables] for m in allmodels]
-# for p in range(nparams):
-#     print(keys_obs[p][9:-2])
-#     trueparam           = vals_obs[p]
-#     recovered_params    = [x[p] for x in paramvals]
-#     recovered_mean = np.mean(recovered_params)
-#     recovered_std = np.std(recovered_params)
-#     print('True: {0:.3e}; Recovered mean: {1:.3e}; Recovered std: {2:.3e}'.format(
-#         trueparam,recovered_mean,recovered_std))
-#
-# plt.figure(figsize=(15, 8))
-# plt.title('Sensory uncertainty')
-# for p in range(3,nparams):
-#     trueparam           = vals_obs[p]
-#     recovered_params    = [x[p] for x in paramvals]
-#     plt.scatter(trueparam, trueparam, 20, 'r',
-#             label='true')
-#     plt.scatter([trueparam] * len(recovered_params), recovered_params, 20, 'b',
-#             label='recovered')
-# plt.xlabel('True parameter value')
-# plt.ylabel('Recovered parameter value')
-# plt.legend()
-# plt.show()
-#
-# print('done.\n')
+Niters_EM    = 25
+Niters_mstep = 1
+
+trainset = {}
+trainset['obs'] = observer(N=conds,
+                           ca=0.1, r=0.001, sa=[0.5, 1, 2],
+                           scope='observer', dtype=alldtypes)
+x, xhat, u, tt = \
+    lqg.simulate(dyn, trainset['obs'], batch_size=batchsize)
+x, xhat, u, tt = \
+    lqg.simulate(dyn, trainset['obs'], x_fix=[x[0]], batch_size=batchsize)
+trainset['x'] = x
+trainset['xhat'] = xhat
+trainset['u'] = u
+
+allmodels = []
+allelbos   = []
+
+print('True parameters: ')
+trainset['obs'].printVariables()
+
+max_res = runEM.calculate_apprx_elbo(trainset, dyn, trainset['obs'])
+max_exp = max_res['expectations']
+max_elbo = max_res['elbo']
+max_logpz = runEM.prob_latent(max_res['expectations'], xhat, dyn)
+
+for iter in range(Niter):
+    # build a model observer
+    model = observer(N=conds,ca=0.1, r=0.001, sa=None,
+                     scope='model', dtype=alldtypes)
+    print('Model initial parameters: ')
+    model.printVariables()
+
+    # run EM Algorithm
+    elbos = runEM(trainset, dyn, model, lr=0.1,
+                  Niters=Niters_EM, Niters_mstep=Niters_mstep)
+
+    # plot elbos
+    plt.figure(figsize=(15, 8))
+    plt.title('Elbo')
+    plt.plot(np.arange(len(elbos)) / Niters_mstep, elbos,
+             'b', label= 'trained model')
+    plt.plot(np.arange(len(elbos)) / Niters_mstep, [max_elbo] * len(elbos),
+             'r', label='true model')
+    plt.xlabel('Iterations')
+    plt.ylabel('Elbo per timepoint')
+    plt.legend()
+    plt.show()
+
+    print('Recovered parameters: ')
+    model.printVariables()
+
+    allmodels += [model]
+    allelbos += [elbos]
+
+nparams         =  len(trainset['obs'].trainable_variables)
+keys_obs        = [v.name for v in trainset['obs'].trainable_variables]
+vals_obs        = [v.numpy().item() for v in trainset['obs'].trainable_variables]
+paramvals       = [[v.numpy().item() for v in m.trainable_variables] for m in allmodels]
+for p in range(nparams):
+    print(keys_obs[p][9:-2])
+    trueparam           = vals_obs[p]
+    recovered_params    = [x[p] for x in paramvals]
+    recovered_mean = np.mean(recovered_params)
+    recovered_std = np.std(recovered_params)
+    print('True: {0:.3e}; Recovered mean: {1:.3e}; Recovered std: {2:.3e}'.format(
+        trueparam,recovered_mean,recovered_std))
+
+plt.figure(figsize=(15, 8))
+plt.title('Sensory uncertainty')
+for p in range(3,nparams):
+    trueparam           = vals_obs[p]
+    recovered_params    = [x[p] for x in paramvals]
+    plt.scatter(trueparam, trueparam, 20, 'r',
+            label='true')
+    plt.scatter([trueparam] * len(recovered_params), recovered_params, 20, 'b',
+            label='recovered')
+plt.xlabel('True parameter value')
+plt.ylabel('Recovered parameter value')
+plt.legend()
+plt.show()
+
+print('done.\n')
 
 
 

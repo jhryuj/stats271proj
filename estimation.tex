@@ -18,14 +18,38 @@
 %%%%%%%%%%%%%% Section in Equations %%%%%%%%%%%%%%%%%
 \numberwithin{equation}{section}
 
-\title{Estimation }
-\author{Joshua Jun Hwan Ryu; jhryu25@stanford.edu}
+\title{Inferring Perception from Continuous Control}
+\author{Joshua Jun Hwan Ryu \\jhryu25@stanford.edu\\Department of Psychology, ICME \\ Stanford University}
 \date{June. 4. 2021}
 
 \begin{document}
 \maketitle
 
-\section{Generative model}
+\section{Introduction}
+
+Imagine catching an annoying fly in your room. This is sometimes an amazingly difficult task that requires careful perceptual and control mechnaisms. In order to successfully accomplish this task, the human agent needs to integrate uncertain time-to-time information about the fly's position.  At a given split millisecond, one might have almost no idea of where the fly is, however, as more visual information makes its way throught the eyes, the temporal information are properly integrated in order for one to give rise to the perception of a fly.  One then needs to use this perceptual information in order to make a series of control movements: track the fly with our eyes and then eventually swat the fly with our hands.  Visual information available to us is highly uncertainty for a short time frame, and rich prior information from the previous information need to be integrated with the constantly changing incoming sensory information.  The goal of the visual system is to infer the most likely state of the external world by integrating information from the past with the present.  \\
+
+In this project,  I show the plausibility of the parameter estimation using simulated data.  I outline the mathematical framework with given model, and the distribution of the control sequence under the given model.  The inference and estimation are implemented through the EM-algorithm,  maximizing the evidence lower bound (elbo).  Since the model is completely Gaussian, it allows for a closed-form solution to the marginal distributions on the latents and the elbo computation.  The outline of the derivations are in the appendix.  I derive a closed form for the distribution of the latent states using Kalman smoothing,  and then use these distribution to compute the elbo in closed form.  Once the elbo is computed,  I use tensorflow's autodifferentiation tools to optimize the parameters.  
+
+\section{Task}
+
+\begin{figure}
+\centering
+\includegraphics[width=0.3\textwidth]{figures/task_sampleframe}
+\includegraphics[width=0.6\textwidth]{figures/task_behavior}
+\caption{(Left) Sample frame from the task. The stimulus is a Gaussian blob embedded in noise with matched spatial frequencies. The subjects are instructed to fixate and track the blob with a cursor. (Right) Target (black) and cursor position (red) from a sample trial of the task.}
+\end{figure}
+
+The dataset consists of the performance various human subjects tracking a gaussian blob embedded in noise with matched spatial frequencies with a cursor controlled by either a mouse (n=5) or a trackpad (n=3). The stimulus undergoes a Brownian motion of a fixed standard deviation (which I call velocity). Various combinations of stimulus uncertainty (3 levels) and stimulus velocity (3 levels) are tested. At each condition, each subjects undergo 15 trials at a given condition. Last 10 trials are analyzed.  \textbf{Input}: target blob positions (15 seconds at 60hz). \textbf{Output}: human control movements (mouse positions)
+
+
+\section{The Generative model}
+
+\begin{figure}
+\centering
+\includegraphics[width=0.75\textwidth]{figures/model}
+\caption{The generative model.  The model assumes that the observer makes optimal state estimation from noisy measurements of the world for perception via using Kalman filters.  The estimated states are then used to make an optimal Linear- Quadratic-Gaussian control.  The experimenter,  sees the output of the control and the exact state of the world.  The goal of the experimenter is to find the perception and control parameters that have generated the data.}
+\end{figure}
 
 We are interested in the following variables: 
 \begin{itemize}
@@ -35,7 +59,7 @@ We are interested in the following variables:
 \item $u_t$ := observer's exerted force
 \end{itemize}
 
-\noindent We can describe the using the following dynamical system:
+\noindent We can describe the generative process using the following dynamical system:
 \begin{align*}
 &\text{World} &&\bm{x}_{t+1} = A\bm{x}_t + B\bm{u}_{t} + \bm{\xi}_t &\\
 &\text{Measurement} &&\bm{y}_{t} = H\bm{x}_t + \bm{\omega}_t &\\
@@ -43,7 +67,58 @@ We are interested in the following variables:
 &\text{Control} &&\bm{u}_{t} = - L(t,\theta, \phi)z_{t} + \bm{\varepsilon}_t &
 \end{align*}
 
-\noindent The noise terms are all stationary, independent and distributed as follows:
+\noindent The noise terms are all stationary,  independent and normally distributed. 
+
+\section{EM Algorithm}
+
+To estimate the parameters,  I maximize the elbo $ L(q,\theta,\phi$: 
+\begin{align*}
+\log P(\{x_t\}_{t=1}^T, \theta, \phi) &= \log P(\{x_t\} | \theta, \phi) + \log P(\theta, \phi)   \\
+&\geq \mathbb{E}_{q(\{z_{t-1}\})} \left[ \log P(\{x_{t}, z_{t-1}\}|\theta, \phi)  + \log q(\{z_{t-1}\})) \right]+ \log P(\theta, \phi) \\
+& \triangleq L(q,\theta,\phi)
+\end{align*}
+
+In the expectation step,  we find the probability of the latent variables given all the observations  $p(z_t | x_{1:T})$. This is done through Kalman smoothing (check appendix for details).  
+
+In the maximization step,  we use the expectations to calculate the elbo (check appendix for details). Then, assuming that the perceptual and control filters are differentiable with respect to the parameters, we use autodifferentiation tools in tensorflow to run gradient descent on the negative elbo.
+
+\section{Inference and Estimation}
+In this section,  we check whether the algorithm is able to recover the true parameters.  For each simulation, we simulate the model behavior from a set of true parameters.  In figure \ref{marginals},  we show the results of the E-step of the algorithm with the true parameters.  The latent state estimates are highly dependent on the control parameters and noise.  Observing the control that arises from the latent state significantly decreases the uncertainty of the latent state (e.g. the filtered and the smoothed marginals as opposed to prior marginals). 
+
+\begin{figure} \label{marginals}
+\centering
+\includegraphics[width=0.75\textwidth]{figures/marginals}
+\caption{Probability and 3 std of state perception $p(z_t )$ under the model with true parameters.  (Green dotted): Simulated target trajectory. (Black dotted): Simulated target perception. (Yellow) prior for filtered marginals: $p(z_t | x_{1:t})$, given true parameters.  (Red) filtered marginals: $p(z_t | x_{1:t+1})$, given true parameters.  (Blue) smoothed marginals: $p(z_t | x_{1:T})$.  Each panel indicate the different dimensions of the perceptual state (target position, cursor position, cursor velocity, cursor acceleration). }
+\end{figure}
+
+Having checked that the algorithm recovers reasonable latent state estimates,  we then run the E-step and M-step with random initialization of the parameters on the data simulated with true parameters.  While there seems to be some numerical instabilities (yet to figure out..), for many simulated data, we see that the elbo for the true parameter is the highest.  Figure \ref{elbos} shows the results for one such simulation. Finally figure \ref{estimation} shows the results of the gradient ascent on the elbos for different model initializations. 
+
+\begin{figure}\label{elbos}
+\centering
+\includegraphics[width=0.75\textwidth]{figures/elbos}
+\caption{Testing the elbo calculation on simulated data.  We simulated ideal observer behavior from a set of true parameters, and used suboptimal models with random parameter initializations to calculate elbo and to check the probability of getting the simulated behavior with the random parameters. (Left) Elbo per timepoint for models with different parameter values.  The model with true parameters has the highest elbo, for this specific true parameter. (Right) log probability of simulated perception $z_t$ under the calculated smoothed marginals $p(z_t| x_{1:T})$ for different model parameters.}
+\end{figure}
+
+\begin{figure}\label{estimation}
+\centering
+\includegraphics[width=0.5\textwidth]{figures/Estimation}
+\caption{We initialized the models with random sensory parameters and initialized the control parameter at the true value.  We plot the recovered parameters of model with 10 iterations of the EM algorithm. }
+\end{figure}
+
+\newpage
+\section{Appendix: Model assumptions and details}
+I summarize some of the assumptions of the model here: 
+\begin{itemize}
+\item Humans receive very noisy visual information about the world in a small time frame.
+\item Humans continuously integrate noisy visual information in an optimal fashion, given the world dynamics, weighing its uncertainty via the Kalman filter.
+\item Perception and control are modular (e.g. Firestone and Scholl, 2016 \cite{Firestone2016}).  Planning for movement does not directly change our perceptual processes. 
+\item Human control is limited by our biology and control noise.  Our arms cannot move at infinite speeds and are parsimonious with respect to making movements.  Motor movement have been shown to minimize jerk or endpoint variance., and are subject to multiplicative motor noise (e.g. Wolpert, 2000 \cite{Wolpert2000}). For the sake of the project, I add a quadratic loss on the control force and add a Gaussian control noise.  
+\item Human control movements are approximately linear (e.g.  Todorov, 2002 \cite{Todorov2002}). 
+\end{itemize}
+
+For the scope of the paper, I omit the details of the perceptual and control filters, since the method employed is general and can be applied to any perception and control models that are differentiable with respect to the parameters. A version can be found in Todorov, 2005 \cite{Todorov2005}, with the only difference being that multiplicative noise was omitted here for simplicity.\\
+
+The noise are distributed as follows: 
 \begin{itemize}
 \item Dynamics noise (determined by experimenter) $\bm{\xi}_t  \sim \mathcal{N}(0, \Omega_x)$ 
 \item Measurement noise $\bm{\omega}_t  \sim \mathcal{N}(0, \Omega_y)$ 
@@ -81,21 +156,22 @@ p(z_0; \theta) &\triangleq \mathcal{N}(0, \Omega_{z_0})\\
 p(\theta) &\triangleq \mathcal{N}( someval, largeval \Omega_\theta)\\
 p(\phi) &\triangleq \mathcal{N}( someval, largeval \Omega_\phi)\\
 \end{align*}
-%% Note prior for hand-calculated values
 
-\section{Inference}
+Since the elbo takes into consideration many timepoints and batches, the prior distribution on the parameters become almost negligble.  
+
+\section{Appendix: Inference details}
 \noindent We are interested in finding the parameters that maximize the joint probability of seeing the obsever control with the parameters $ \argmax_{\{\theta, \phi\}} \log P(\{\bm{u}_t\}, \theta, \phi | \{x_t\})$. In order to do the inference, we need to marginalize the latent variables and then optimize the objective. I adopt the EM algorithm for this, and alternate between approximating the marginal distribution on the latent variables (E-step) and optimizing the evidence lower bound (elbo): 
 \begin{align*}
-\log P(\{\bm{u}_t\}, \theta, \phi) &= \log P(\{\bm{u}_t\} | \theta, \phi) + \log P(\theta, \phi)   \\
-&\geq \mathbb{E}_{q(z)} \left[ \log P(\{\bm{u}_t, z_t\}|\theta, \phi)  + \log q(\{z_t\}) \right]+ \log P(\theta, \phi) \\
+\log P(\{x_t\}_{t=1}^T, \theta, \phi) &= \log P(\{x_t\} | \theta, \phi) + \log P(\theta, \phi)   \\
+&\geq \mathbb{E}_{q(\{z_{t-1}\})} \left[ \log P(\{x_{t}, z_{t-1}\}|\theta, \phi)  + \log q(\{z_{t-1}\})) \right]+ \log P(\theta, \phi) \\
 & \triangleq L(q,\theta,\phi)
 \end{align*}
 (I omit the dependence on the stimulus $x_t$, and write them only as needed.) \\
 
 The lower bound is tight when the variational distribution on the latents $q(z_{1:T})$ is equal to the posterior. The posterior on the latents is intractable. However, for the E-step, it suffices to calculate the latent marginals needed for the M-step. Since the joint distribution given the parameters is:
 \begin{align*}
-P(\{z_t\}, \{\bm{u}_t\}) & := P(\{z_t\}, \{\bm{u}_t\}|\theta, \phi, \{x_t\}) \\
-&= P(z_0) \prod_{t=0}^{T-1} P(z_{t+1} \mid z_t) \prod_{t=0}^T P(u_t \mid z_t)
+P(\{z_t\}_{t=0}^{T-1}, \{\bm{x}_t\}_{t=1}^T) & := P(\{z_t\}, \{\bm{x}_t\}|\theta, \phi, \{x_t\}) \\
+&= P(z_0) \prod_{t=0}^{T-1} P(z_{t+1} \mid z_t) \prod_{t=0}^T P(x_{t+1} \mid z_t)
 \end{align*}
 
 \noindent  The maximization of the elbo over the parameters amounts to:  
@@ -171,11 +247,8 @@ R_{t}
 r_{t} &\triangleq  x_{t+1} - (Ax_{t} - BL_t \mu_{t|t-1}) &\text{(innovation)}\\
 \end{align*}
 
-%%%%% Notes
-note to myself: Numerical stability: Thrun et al. 2006; Simon 2006.  take care of 0 probabilities and other small probabilities properly (some of these matrices are sparse)
-
 \subsubsection{Backward step: Kalman smoothing}
-The backward step involves calculating the smoothed marginals  $p(z_t | u_{1:T})$. Again, I omit the derivations and just outline the results here. The results follow from equations \ref{smooth1} and \ref{smooth2}. Details can also be found in references \cite{Murphy2012} and \cite{Jordan2007}. \\
+The backward step involves calculating the smoothed marginals  $p(z_t | u_{1:T})$. Again, I omit the derivations and just outline the results here. The results follow from equations \ref{smooth1} and \ref{smooth2}. Details can also be found in references \cite{Murphy2012} and \cite{Jordan2007}.  Unlike the foward backward algorithm in hidden markov models that computes $p(x_{t+1:T} | z_t)$ in the backwards step, in the backwards step, it is more common and more computationally tractable to compute $p(z_t | x_{t+1:T})$ directly \cite{Murphy2012}. \\
 
 As an inductive hypothesis, assume that $p(z_{t+1} | x_{1:T}) \sim \mathcal{N}(\mu_{t+1|T}, \Sigma_{t+1|T})$. Then, the smoothed marginals can be computed recursively as:
 \begin{align*}
@@ -190,8 +263,8 @@ J_t &\triangleq \Sigma_{t|t} a^T_{z_{t|t-1}}\Sigma^{-1}_{t+1|t}
 In the M-step, we want to calculate the the expected ELBO over the calculated marginals, as in equation \ref{M-objective} and then maximize it with respect to the parameters. Similar calculations can be found in \cite{Shumway1982}.
 
 \begin{align*}
-\argmax_{\theta, \phi} L(q,\theta,\phi) &= \argmax_{\theta, \phi} \Bigg[\mathbb{E}_{q(z_0)} \log P(z_0) + \sum_{t=0}^{T-1} \mathbb{E}_{q(z_{t+1}, z_t)} \log P(z_{t+1} \mid z_t) \\
-&\hspace{6em} + \sum_{t=0}^T \mathbb{E}_{q(z_t)} \log P(u_t \mid z_t)  + \log P(\theta, \phi) \Bigg]
+\argmax_{\theta, \phi} L(q,\theta,\phi) &= \argmax_{\theta, \phi} \Bigg[\mathbb{E}_{q(z_0)} \log P(z_0) + \sum_{t=0}^{T-2} \mathbb{E}_{q(z_{t+1}, z_t)} \log P(z_{t+1} \mid z_t) \\
+&\hspace{6em} + \sum_{t=1}^{T-1} \mathbb{E}_{q(z_t)} \log P(x_t \mid z_{t-1})  + \log P(\theta, \phi) \Bigg]
 \end{align*}
 
 Calculating each summand and ignoring constants
@@ -204,19 +277,23 @@ Calculating each summand and ignoring constants
 \end{align*}
 
 The state transition terms are computed as follows:
-\begin{align*}
-\sum_{t=0}^{T-1} \mathbb{E}_{q(z_{t+1}, z_t)} \log P(z_{t+1} \mid z_t) &\propto -\frac{1}{2} \sum_{t=0}^{T-1} \Bigg[\log |\Omega_{z_{t+1|t}}| + \mathrm{Tr}\left(\Omega_{z_{t+1|t}}^{-1}\mathbb{E}_{q(z_{t+1}, z_t)} Quad \right) \Bigg]\\
-&= - \frac{1}{2} \sum_{t=0}^{T-1} \Bigg[\log |\Omega_{z_{t+1|t}}| + \mathrm{Tr}\Bigg(\Omega_{z_{t+1|t}}^{-1}\bigg(P_{t+1}  \\
-&\hspace{3em} - a_{z_{t+1|t}}P_{t+1,t}^T - P_{t+1,t} a_{z_{t+1|t}}^T + a_{z_{t+1|t}}P_{t}a_{z_{t+1|t}}^T  \\
-&\hspace{3em} - \mu_{t+1|T}b_{z_{t+1|t}}^T - b_{z_{t+1|t}}\mu_{t+1|T}^T  + a_{z_{t+1|t}}\mu_{t|T}b_{z_{t+1|t}}^T  + b_{z_{t+1|t}}\mu_{t|T}^T a_{z_{t+1|t}}^T  \\
-&\hspace{3em} + b_{z_{t+1|t}}b_{z_{t+1|t}}^T  \bigg)\Bigg)\Bigg]\\
-P_{t+1} &\triangleq \Sigma_{t+1|T}+\mu_{t+1|T}\mu_{t+1|T}^T\\
-P_{t} &\triangleq \Sigma_{t|T} + \mu_{t|T}\mu_{t|T}^T\\
-P_{t+1,t} &\triangleq (a_{z_{t+1|t}}\Sigma_{t|T} + \mu_{t+1|T}\mu_{t|T}^T)\\
-P_{t,t+1} &\triangleq \Sigma_{t|T}a_{z_{t+1|t}}^T + \mu_{t|T}\mu_{t+1|T}^T = P_{t+1,t}^T \\
-\end{align*}
+\begin{align}
+\sum_{t=0}^{T-1} \mathbb{E}_{q(z_{t+1}, z_t)} \log P(z_{t+1} \mid z_t) &\propto -\frac{1}{2} \sum_{t=0}^{T-1} \Bigg[\log |\Omega_{z_{t+1|t}}| + \mathrm{Tr}\left(\Omega_{z_{t+1|t}}^{-1}\mathbb{E}_{q(z_{t+1}, z_t)} Quad \right) \Bigg] \nonumber\\
+&= - \frac{1}{2} \sum_{t=0}^{T-1} \Bigg[ \log |\Omega_{z_{t+1|t}}| + \mathrm{Tr}\Bigg(\Omega_{z_{t+1|t}}^{-1}\bigg( \Sigma_{t+1|T} - a_{z_{t+1|t}}\Sigma_{t|T}a_{z_{t+1|t}}^T  \nonumber \\
+&\hspace{5em} + (\mu_{t+1} - a_{z_{t+1|t}}\mu_t - b_{z_{t+1|t}})(\mu_{t+1} - a_{z_{t+1|t}}\mu_t - b_{z_{t+1|t}})^T \bigg)\Bigg)\Bigg] \label{stable_transition}\\\ 
+&= - \frac{1}{2} \sum_{t=0}^{T-1} \Bigg[\log |\Omega_{z_{t+1|t}}| + \mathrm{Tr}\Bigg(\Omega_{z_{t+1|t}}^{-1}\bigg(P_{t+1}  \nonumber\\
+&\hspace{3em} - a_{z_{t+1|t}}P_{t+1,t}^T - P_{t+1,t} a_{z_{t+1|t}}^T + a_{z_{t+1|t}}P_{t}a_{z_{t+1|t}}^T  \nonumber\\
+&\hspace{3em} - \mu_{t+1|T}b_{z_{t+1|t}}^T - b_{z_{t+1|t}}\mu_{t+1|T}^T  + a_{z_{t+1|t}}\mu_{t|T}b_{z_{t+1|t}}^T  + b_{z_{t+1|t}}\mu_{t|T}^T a_{z_{t+1|t}}^T  \nonumber\\
+&\hspace{3em} + b_{z_{t+1|t}}b_{z_{t+1|t}}^T  \bigg)\Bigg)\Bigg] \label{shumway_transition} \\
+P_{t+1} &\triangleq \Sigma_{t+1|T}+\mu_{t+1|T}\mu_{t+1|T}^T \nonumber\\
+P_{t} &\triangleq \Sigma_{t|T} + \mu_{t|T}\mu_{t|T}^T \nonumber\\
+P_{t+1,t} &\triangleq (a_{z_{t+1|t}}\Sigma_{t|T} + \mu_{t+1|T}\mu_{t|T}^T) \nonumber\\
+P_{t,t+1} &\triangleq \Sigma_{t|T}a_{z_{t+1|t}}^T + \mu_{t|T}\mu_{t+1|T}^T = P_{t+1,t}^T  \nonumber
+\end{align}
 
-Note that the joint expectations marginalizes out except the covariances, which we know from the joint distribution. Explicitly, the quadratic form is: 
+The last  equation (\ref{shumway_transition}) follows the equations from \cite{Shumway1982}.  Empirically, the second equation (\ref{stable_transition}),  in terms of the quadratic form of the expected smoothed marginals seems to give more numerically stable results.   
+
+I derive the transitions. here  Note that the joint expectations marginalizes out except the covariances, which we know from the joint distribution.  Explicitly, the quadratic form is in the transition probability is: 
 \begin{align*}
 Quad &= (z_{t+1} - a_{z_{t+1|t}}z_t -b_{z_{t+1|t}})(z_{t+1} - a_{z_{t+1|t}}z_t -b_{z_{t+1|t}})^T \\
 &= z_{t+1}z_{t+1}^T + a_{z_{t+1|t}}z_tz_t^Ta_{z_{t+1|t}}^T + b_{z_{t+1|t}}b_{z_{t+1|t}}^T \\ 
@@ -238,45 +315,23 @@ Quad &= (z_{t+1} - a_{z_{t+1|t}}z_t -b_{z_{t+1|t}})(z_{t+1} - a_{z_{t+1|t}}z_t -
 
 Lastly, the likelihoods terms are summed as follows:
 \begin{align*}
-\sum_{t=0}^T \mathbb{E}_{q(z_t)} \log P(u_t \mid z_t) 
-&\propto - \frac{1}{2} \sum_{t=0}^T \Bigg[\log |\Omega_\varepsilon|  + \mathrm{Tr}\left( \Omega_\varepsilon^{-1} \mathbb{E}_{q(z_t)} (u_t + L(t,\theta,\phi)z_t )(u_t + L(t,\theta,\phi)z_t)^T \right) \Bigg] \\
-&= - \frac{1}{2} \sum_{t=0}^T \Bigg[\log |\Omega_\varepsilon|  + \mathrm{Tr}\Bigg( \Omega_\varepsilon^{-1} (u_t + L(t,\theta,\phi)\mu_{t|T} )(u_t + L(t,\theta,\phi)\mu_{t|T})^T \\
-&\hspace{3em}+  L(t,\theta,\phi) \Sigma_{t|T} L(t,\theta,\phi)^T\Bigg) \Bigg] \\
+\sum_{t=0}^T \mathbb{E}_{q(z_t)} \log P(x_t \mid z_t) 
+&\propto - \frac{1}{2} \sum_{t=0}^T \Bigg[\log |\Omega_\varepsilon|  + \mathrm{Tr}\left( \Omega_\varepsilon^{-1} \mathbb{E}_{q(z_t)} (x_t - Ax_{t-1} +BL(t,\theta,\phi)z_t )(x_t + Ax_{t-1} + BL(t,\theta,\phi)z_t)^T \right) \Bigg] \\
+&= - \frac{1}{2} \sum_{t=0}^T \Bigg[\log |\Omega_\varepsilon|  + \mathrm{Tr}\Bigg( \Omega_\varepsilon^{-1} (x_t - Ax_{t-1} +B L(t,\theta,\phi)\mu_{t|T} )(x_t - Ax_{t-1} + BL(t,\theta,\phi)\mu_{t|T})^T \\
+&\hspace{3em}+  BL(t,\theta,\phi) \Sigma_{t|T} (BL(t,\theta,\phi))^T\Bigg) \Bigg] \\
 \end{align*}
 
 Assuming that $K(t,\theta)$ and $L(t,\theta,\phi)$ are differentiable functions of the parameters $\{\theta, \phi\}$, we can then use gradient ascent on this objective function to calculate the optimal parameters. 
 
-\section{Model comparison} 
-\begin{enumerate}
-\item Non-Kalman observer. We don't take into account probabilistic view
-\item Nonadaptive Estimator
-\item Adaptive estimator
-\item Noise structures
-\end{enumerate}
+\section{Appendix: Problems with the algorithm}
 
-\section{Appendix: Kalman Filtering and Smoothing}
+If any of the transitions are deterministic (for instance acceleration, to velocity to position) or have very small noise,  it can cause problems in the loglikelihood estimation. Small variances make the condition number of matrix inversions very large, causing numerical instabilities. Deterministic dynamics also have undefined probbability density. These probably need to be modeled separately.  I add small noise to all dynamics to bypass the deterministic nature., but there may still be numerical instabilities. 
 
-\subsection{Kalman Filter}
-Note that we bundle $u_t$ with $x_{t+1}$ since $z_t$ depends on both the target and the control. We can also reformulate these equations in terms of the target and the cursor separately, and condition all the probabilities on the target. This will create a separate estimation equations for the target and the control. Otherwise, the target variance will be underestimated.
-\begin{align*}
-p(z_t | u_{1:t}, x_{1:t+1}) & \propto p(z_t, u_{1:t},  x_{1:t+1}) \\
-&= \int_{z_{t-1}} p(z_t,z_{t-1} u_{1:t-1}, u_t, x_{1:t}, x_{t+1}) \\
-&= \int_{z_{t-1}} p(u_t, x_{t+1} | z_t, z_{t-1}, u_{1:t-1}, x_{1:t}) p(z_t |z_{t-1}, u_{1:t-1}, x_{1:t}) p(z_{t-1}|u_{1:t-1}, x_{1:t})p(u_{1:t-1}, x_{1:t}) \\
-&\propto  p(x_{t+1}  | u_t, x_t) p(u_t| z_t) \int_{z_{t-1}} p(z_t |z_{t-1}, u_{1:t-1}, x_{1:t})  \alpha_{t-1}(z_{t-1})\\
-&\propto  p(u_t | z_t)  \int_{z_{t-1}}p(z_t |z_{t-1}) \alpha_{t-1}(z_{t-1})\\
-&= \mathcal{N}\left(u_t \mid -L(t,\theta,\phi)z_t, \Omega_\varepsilon \right) \int_{z_t} \mathcal{N}\left(z_{t-1} | a_{z_t} z_{t-1} + b_{z_t}, \Omega_{z_{t|t-1}} \right) N(z_{t-1} | \mu_{t-1}, \Sigma_{t-1}) \\
-&= \mathcal{N}\left(u_t \mid -L(t,\theta,\phi)z_t, \Omega_\varepsilon\right) \mathcal{N}\left(z_t | a_{z_t} \mu_{t-1} + b_{z_t}, \Omega_{z_{t|t-1}} +  a_{z_t} \Sigma_{t-1} a_{z_t}^T \right)  \\
-&= \mathcal{N}\left(z_t | \mu_t, \Sigma_t \right) 
-\end{align*}
 
-where: 
-\begin{align*}
-\Sigma_t &= \left[\left( \Omega_{z_{t|t-1}} +  a_{z_t} \Sigma_{t-1} a_{z_t}^T \right)^{-1} + L_t^T \Omega_\varepsilon^{-1}  L_t  \right]^{-1}\\
-\mu_t &= \Sigma_t \left[- L_t^T \Omega_\varepsilon^{-1}u_t + \left[\Omega_{z_{t|t-1}} +  a_{z_t} \Sigma_{t-1} a_{z_t}^T\right]^{-1} \left(a_{z_t} \mu_{t-1} + b_{z_t}\right) \right] 
-\end{align*}
+Numerical stability. 
 
-\subsection{Kalman Smoother}
-Unlike the foward backward algorithm in hidden markov models that computes $p(x_{t+1:T} | z_t)$ in the backwards step, in the backwards step, it is more common and more computationally tractable to compute $p(z_t | x_{t+1:T})$ directly \cite{Murphy2012}. 
+%%%%% Notes
+note to myself: Numerical stability: Thrun et al. 2006; Simon 2006.  take care of 0 probabilities and other small probabilities properly (some of these matrices are sparse)
 
 
 \begin{thebibliography}{9}
@@ -296,15 +351,22 @@ R.H. Shumway, D.S. Stoeffer
 \textit{AN APPROACH TO TIME SERIES SMOOTHING AND FORECASTING USING THE EM ALGORITHM}. 
 Journal of Time Series Analysis, 3 (4): 253-264, 1982.
 
-\bibitem{einstein} 
-Albert Einstein. 
-\textit{Zur Elektrodynamik bewegter K{\"o}rper}. (German) 
-[\textit{On the electrodynamics of moving bodies}]. 
-Annalen der Physik, 322(10):891–921, 1905.
+\bibitem{Wolpert2000} 
+Daniel M Wolpert, Zoubin Ghahramani. 
+\textit{Computational principles of movement neuroscience}.  Nature Neuroscience 3 (11), 1212-1217,. 2000. 
 
-\bibitem{knuthwebsite} 
-Knuth: Computers and Typesetting,
-\\\texttt{http://www-cs-faculty.stanford.edu/\~{}uno/abcde.html}
+\bibitem{Todorov2002} 
+E. Todorov.  \textit{Optimal Feedback Control as a theory of motor coordination}. Nature Neuroscience, 5 (11).  2002
+
+\bibitem{Todorov2005}
+E. Todorov. \textit{Stochastic Optimal Control and Estimation Methods Adapted to the Noise Characteristics of the Sensorimotor System}. Neural Computation 17. 2005
+
+\bibitem{Firestone2016} 
+C. Firestone and B.J. Scholl. 
+\textit{Cognition does not affect perception: Evaluating the evidence for “top-down” effects.} Brain and
+Behavioral Sciences.  2016.
+
+
 \end{thebibliography}
 
 

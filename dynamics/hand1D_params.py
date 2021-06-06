@@ -7,7 +7,7 @@ class hand1D_params():
         '''
         ######################## experimenter parameters ########################
         self.shz     = 30                       # sampling rate
-        self.tsec    = 10                        # seconds (experiment or simulation)
+        self.tsec    = 15                        # seconds (experiment or simulation)
         self.nframes = self.tsec*self.shz       # duration in number of time steps
         self.Nsim    = 50                       # number of simulations
         self.dt      = 1/self.shz               # time steps (sec)

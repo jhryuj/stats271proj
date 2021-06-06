@@ -100,7 +100,7 @@ class EM_estimation():
         x       = trainset['x']
         u       = trainset['u']
         xhat    = trainset['xhat']
-        lqgobj = LQG(dyn)  # just a lightweight LQG object to use repeatedly
+        lqgobj  = LQG(dyn)  # just a lightweight LQG object to use repeatedly
 
         assert len(x) == len(u)
         assert len(x) == len(obs.sparamslist)
@@ -132,6 +132,7 @@ class EM_estimation():
         mu_tT, Sigma_tT = \
             self.backward_step(mu_tt, mu_ttm1, Sigma_tt, Sigma_ttm1, a, dyn)
 
+        # plot target perception and marginals
         if self.debug and False:
             check00 = tf.norm(mu_tt[0][:,0, 0,0] - mu_tT[0][:,0, 0,0])
             check01 = tf.norm(Sigma_tT[0][:, 0, 0]- Sigma_tt[0][:, 0, 0])
@@ -170,7 +171,7 @@ class EM_estimation():
 
             plt.subplot(2,2,2)
             plt.title('Cursor position vs mu')
-            dd = 2; dmu = 1;
+            dd = 2; dmu = dd;
             plt.plot(x[0][:,0,dd,0],'g:',label = 'target')
             plt.plot(xhat[0][:, 0, dd, 0], 'k:', label='target_estim')
 
@@ -201,7 +202,7 @@ class EM_estimation():
 
             plt.subplot(2,2,3)
             plt.title('Cursor velocity vs mu')
-            dd = 3; dmu = 2;
+            dd = 3; dmu = dd;
             plt.plot(x[0][:,0,dd,0],'g:',label = 'target')
             plt.plot(xhat[0][:, 0, dd, 0], 'k:', label='target_estim')
 
@@ -232,7 +233,7 @@ class EM_estimation():
 
             plt.subplot(2,2,4)
             plt.title('Cursor acceleration vs mu')
-            dd = 4; dmu = 3;
+            dd = 4; dmu = dd;
             plt.plot(x[0][:,0,dd,0],'g:',label = 'target')
             plt.plot(xhat[0][:, 0, dd, 0], 'k:', label='target_estim')
 
@@ -263,9 +264,53 @@ class EM_estimation():
 
             plt.show()
 
+        # plot
+        if self.debug and False:
+            # plot mu/Sigma
+            plt.figure(figsize=(10,8))
+            plt.subplot(2,1,1)
+            # plt.plot(x[0][:,0,0,0],'g:',label = 'target')
+            plt.plot(xhat[0][:, 0, 0, 0], 'k:', label='target_estim')
+
+            plt.plot(mu_tT[0][:,0, 0,0], 'b',
+                     linewidth=1,label='mu_tT', alpha=0.4)
+            var = Sigma_tT[0][:, 0, 0]  # variance of the mean muz for target
+            plt.fill_between(tf.range(mu_tT[0].shape[0]),
+                             mu_tT[0][:,0, 0,0] - 3* tf.math.sqrt(var),
+                             mu_tT[0][:,0, 0,0] + 3* tf.math.sqrt(var),
+                             alpha=0.2,color='b', label='mu_tT 3std')
+            plt.title('Target position estimates')
+            plt.xlim([0, 100])
+            plt.legend()
+
+            plt.subplot(2,1,2)
+            plt.title('Target velocity estimates')
+            dd = 1; dmu = dd;
+            plt.plot(xhat[0][:, 0, dd, 0], 'k:', label='target_estim')
+
+            plt.plot(mu_tT[0][:,0, dmu,0], 'b',
+                     linewidth=1,label='mu_tT', alpha=0.4)
+            var = Sigma_tT[0][:, dmu, dmu]  # variance of the mean muz for target
+            plt.fill_between(tf.range(mu_tT[0].shape[0]),
+                             mu_tT[0][:,0, dmu,0] - tf.math.sqrt(var),
+                             mu_tT[0][:,0, dmu,0] + tf.math.sqrt(var),
+                             alpha=0.2,color='b', label='mu_tT 1std')
+            plt.xlim([0,10])
+            plt.legend()
+            plt.show()
+
         expectations = {'mu_tT': mu_tT, 'Sigma_tT': Sigma_tT,
                         'mu_tt': mu_tt, 'Sigma_tt': Sigma_tt,
                         'mu_ttm1': mu_ttm1, 'Sigma_ttm1':Sigma_ttm1}
+
+        if self.debug and False:
+            logpz, logpzlist = self.prob_latent(expectations, xhat, dyn)
+            plt.figure(figsize=(10,8))
+            plt.plot(logpzlist[0][:,0,0])
+            plt.title('Log p(z|x_1:T)')
+            plt.xlabel('Timeframes')
+            plt.ylabel('logp')
+            plt.show()
 
         return expectations
 
@@ -304,18 +349,18 @@ class EM_estimation():
             x_n         = x[n]
             params_n    = parammats[n]
 
-            A   = params_n['A']
-            B   = params_n['B']
-            B_sto = tf.boolean_mask(B, ss_idx, axis=0)
-            H   = params_n['H']
-            C0f = tf.boolean_mask(params_n['C0f'], ss_idx ,axis=0)
+            A       = params_n['A']
+            B       = params_n['B']
+            B_sto   = tf.boolean_mask(B, ss_idx, axis=0)
+            H       = params_n['H']
+            C0f     = tf.boolean_mask(params_n['C0f'], ss_idx ,axis=0)
             C0f_full = params_n['C0f']
-            CA  = params_n['CA']
-            SA  = params_n['SA']
-            EA  = tf.boolean_mask(params_n['EA'],idx,axis=0)
-            Sw = SA @ transpose(SA) # turn std into variance
-            Se = CA @ transpose(CA) # turn std into variance
-            Sz = EA @ transpose(EA)
+            CA      = params_n['CA']
+            SA      = params_n['SA']
+            EA      = tf.boolean_mask(params_n['EA'],idx,axis=0)
+            Sw      = SA @ transpose(SA) # turn std into variance
+            Omega_u = CA @ transpose(CA) # turn std into variance
+            Sz      = EA @ transpose(EA)
             Omega_x = C0f @ transpose(C0f)
             Omega_x_full = C0f_full @ transpose(C0f_full)
 
@@ -333,7 +378,7 @@ class EM_estimation():
             for t in range(0, T):
                 if t == 0:
                     mu_prior    = b_n[t,:,:,:] # likelihood only p(z|x0)
-                    Sigma_prior = S_n[t, :, :] # likelihood only
+                    Sigma_prior = S_n[t, :, :] # p(z_0 | x_0) likelihood only
                 else:
                     mu_prior     = a_n[t,None,:,:] @ mu_tt_n[t-1] + b_n[t,:,:,:]
                     Sigma_prior  = a_n[t,:,:] @ Sigma_tt_n[t-1] @ \
@@ -356,7 +401,7 @@ class EM_estimation():
                 condvar = (B_sto @ L_n[t,:,:]
                            @ Sigma_prior
                            @ tf.transpose(B_sto @ L_n[t,:,:])) \
-                          + Omega_x + (B_sto @ Se @ transpose(B_sto))
+                          + Omega_x + (B_sto @ Omega_u @ transpose(B_sto))
 
                 # estimable_idx = tf.reduce_sum(condvar,axis=0) == 0
                 invsqrtcondvar = tf.linalg.inv(tf.linalg.cholesky(condvar))
@@ -368,7 +413,7 @@ class EM_estimation():
                 Sigma_post = (tf.eye(Sigma_prior.shape[0],dtype=x[0].dtype) -
                               Rt @ (-1 * B_sto @ L_n[t,:,:])) @ Sigma_prior
 
-                if self.debug:
+                if self.debug and False:
                     # todo: the innovation term is dominating the prior term??
                     # check if invertible
                     tf.linalg.cholesky(Sigma_post)
@@ -542,10 +587,13 @@ class EM_estimation():
             T = a_n.shape[0]
 
             # prior term for z0
-            Sz0 = Omegaz_n[0,:,:]
-            invsqrtsz0 = tf.linalg.inv(tf.linalg.cholesky(Sz0))
-            elbo += -1/2 * tf.reduce_sum(tf.linalg.logdet(Sz0) + tf.linalg.trace(
-                transpose(invsqrtsz0[None, :, :]) @ invsqrtsz0[None,:,:] @ (
+            Sz0         = Omegaz_n[0,:,:]
+            invsqrtsz0  = tf.linalg.inv(tf.linalg.cholesky(Sz0))
+            elbo += -1/2 * tf.reduce_sum(
+                tf.cast(Sz0.shape[-1] * tf.math.log(2*np.pi),Sz0.dtype) +
+                tf.linalg.logdet(Sz0) +
+                tf.linalg.trace(
+                    transpose(invsqrtsz0[None, :, :]) @ invsqrtsz0[None,:,:] @ (
                     Sigma_n[0, None, :,:] + mu_n[0,:,:,:] @ transpose(mu_n[0,:,:,:])
                 )))
 
@@ -561,6 +609,7 @@ class EM_estimation():
                        Sigma_n[t, None, :, :] - \
                        a_n[t,None,:,:] @ Sigma_n[t-1,None,:,:] @ transpose(a_n[t,None,:,:])
                 elbotrans =  -1/2 * tf.reduce_sum(
+                    tf.cast(Omegaz_n.shape[-1] * tf.math.log(2*np.pi),Omegaz_n.dtype) +
                     tf.linalg.logdet(Omegaz_n[t,None,:,:])
                     + tf.linalg.trace(transpose(invsqrtOmegaz_t) @ invsqrtOmegaz_t @ quad))
 
@@ -671,6 +720,7 @@ class EM_estimation():
                 Omega_xlike     = Omega_x_full + B @ Omega_u @ transpose(B)
                 invsqrtOmegax   = tf.linalg.inv(tf.linalg.cholesky(Omega_xlike))
                 elbolike   =  -1 / 2 * tf.reduce_sum(
+                    tf.cast(Omega_xlike.shape[-1] * tf.math.log(2*np.pi),Omega_xlike.dtype) +
                     tf.linalg.logdet(Omega_xlike) +
                     tf.linalg.trace(transpose(invsqrtOmegax)
                                     @ invsqrtOmegax @ quadx))
@@ -718,7 +768,7 @@ class EM_estimation():
             CA  = params_n['CA']
             SA  = params_n['SA']
             EA  = tf.boolean_mask(params_n['EA'],idx,axis=0) # estimation noise
-            Sw = SA @ tf.transpose(SA) # turn std into variance
+            Sy = SA @ tf.transpose(SA) # turn std into variance
             Sz = EA @ tf.transpose(EA)
 
             Tp1, batch_size, SS, _ = x_n.shape # (T,B,SS,1)
@@ -726,12 +776,12 @@ class EM_estimation():
 
             an = [tf.zeros((SS_estimable,SS_estimable),dtype=x[0].dtype)]
             bn = [tf.boolean_mask(K_n[0, None,:, :], idx, axis=1) @ H[None,:,:] @ x_n[0,:,:,:]]
-            Sn = [tf.boolean_mask(K_n[0, :, :],idx,axis=0) @ Sw @
+            Sn = [tf.boolean_mask(K_n[0, :, :],idx,axis=0) @ Sy @
                   tf.transpose(tf.boolean_mask(K_n[0, :, :],idx,axis=0)) + Sz]
 
             an_full = [tf.zeros((SS,SS),dtype=x[0].dtype)]
             bn_full = [K_n[0, None,:, :]@ H[None,:,:] @ x_n[0,:,:,:] ]
-            Sn_full = [K_n[0, :, :] @ Sw @ transpose(K_n[0, :, :]) +
+            Sn_full = [K_n[0, :, :] @ Sy @ transpose(K_n[0, :, :]) +
                        params_n['EA'] @ transpose(params_n['EA'])]
 
             for t in range(1,Tp1-1):
@@ -740,12 +790,12 @@ class EM_estimation():
                      tf.boolean_mask(K_n[t,:,:],idx,axis=0) @ tf.boolean_mask(H,idx,axis=1) # (ss-us,ss-us)
                 bt = tf.boolean_mask(K_n[t, None,:, :],idx, axis=1) @ \
                      H[None,:,:] @ x_n[t,:,:,:] # make broadcasting explicit
-                St = tf.boolean_mask(K_n[t, :, :],idx,axis=0) @ Sw @ \
+                St = tf.boolean_mask(K_n[t, :, :],idx,axis=0) @ Sy @ \
                      tf.transpose(tf.boolean_mask(K_n[t, :, :],idx,axis=0)) + Sz
 
                 at_full = A - B @ L_n[t - 1, :, :] - K_n[t, :, :] @ H
                 bt_full = K_n[t, None, :, :] @ H[None, :, :] @ x_n[t, :, :,:]  # make broadcasting explicit
-                St_full = K_n[t, :, :] @ Sw @ transpose(K_n[t, :, :]) + \
+                St_full = K_n[t, :, :] @ Sy @ transpose(K_n[t, :, :]) + \
                           params_n['EA'] @ transpose(params_n['EA'])
 
                 an += [at]
@@ -901,14 +951,17 @@ class EM_estimation():
         N = len(expectations['mu_tT'])
 
         lp = 0
+        lplist = []
         for n in range(N):
             mu      = expectations['mu_tT'][n] # T x B x D x 1
             Sigma   = expectations['Sigma_tT'][n] # T x D x D
             xhat_n  = tf.boolean_mask(xhat[n],idx,axis=2) # T x B x D x 1
 
-            lp += tf.reduce_sum(self.MVN_logpdf(xhat_n, mu, Sigma))
+            lp_n    = self.MVN_logpdf(xhat_n, mu, Sigma)
+            lplist += [lp_n]
+            lp      += tf.reduce_sum(lp_n)
 
-        return (lp / tf.cast(NTB,lp.dtype)).numpy()
+        return (lp / tf.cast(NTB,lp.dtype)).numpy(), lplist
 
     def MVN_logpdf(self, data, mean, sigma):
         # data: T x B x D x 1
@@ -925,4 +978,90 @@ class EM_estimation():
         norm = - 0.5 * D * np.log(2 * np.pi) - tf.math.log(tf.linalg.trace(L))
         lp += norm[:, None, None]  # (...,)
 
+        if self.debug and False:
+            plt.figure(figsize=(10, 8))
+            plt.plot(tf.norm(xs,axis=2)[:,0,0])
+            plt.xlabel('timeframe')
+            plt.ylabel('logpz')
+
         return lp  #
+
+    def prob_latent_generative(self, trainset, model, dyn):
+        '''
+        prob latent from generative model
+
+        :param trainset:
+        :param model:
+        :param dyn:
+        :return:
+        '''
+        obs     = trainset['obs']
+        x       = trainset['x']
+        u       = trainset['u']
+        xhat    = trainset['xhat']
+
+        NTB     = tf.reduce_sum([xn.shape[0]*xn.shape[1] for xn in xhat])
+        N       = len(x)
+        lqgobj  = LQG(dyn)  # just a lightweight LQG object to use repeatedly
+
+        lplist = []
+        parammats = []; K = []; L = [];
+        for n in range(N):
+            parammat_n  = model.generateParamMat(dyn, n=n)
+            Kn, Ln      = lqgobj.calculateFilters(parammat_n, dyn)
+            # save in list
+            parammats += [parammat_n]
+            K += [Kn]
+            L += [Ln]
+
+        # calculate statistics for the distribution of conditionals
+        # a_{z_{t|t-1}}, b_{z_{t|t-1}}, Sigma_{z_{t|t-1}}
+        a, b, S, _, _, _ = \
+            self.calculate_conditionals(L, K, x, u, parammats, dyn)
+
+        lplike  = 0
+        lptrans = 0
+        lp_like = []    # p(x_{t+1}| z_t, x_t, theta, phi )
+        lp_trans = []   # p(z_{t+1}| z_t, x_{t+1}, theta, phi )
+        for n in range(N):
+            mu          = a[n][1:,None,:,:] @ xhat[n][:-1,:,:,:] + b[n][1:,:,:,:] # (T,SS,SS)
+            Sigma       = S[n][1:,:,:]
+            lp_trans    += [self.MVN_logpdf(xhat[n][1:,:,:,:], mu, Sigma)]
+            lptrans     += tf.reduce_sum(lp_trans[-1])
+
+            if self.debug and True:
+                res = xhat[n][51, 0, :, :] - mu[50, 0, :, :]
+
+            params_n    = parammats[n]
+            A           = params_n['A']
+            B           = params_n['B']
+            CA          = params_n['CA']
+            C0f         = params_n['C0f']
+            Omega_u     = CA @ transpose(CA)  # turn std into variance
+            Omega_x     = C0f @ transpose(C0f)
+
+            mu      = A[None,None,:,:] @ x[n][:-1,:,:,:] - \
+                      B[None,None,:,:] @ L[n][:,None,:,:] @ xhat[n]  # (T,SS,SS)
+            Sigma   = Omega_x + B @ Omega_u @ transpose(B)
+            lp_like += [self.MVN_logpdf(x[n][1:,:,:], mu, Sigma[None,:,:])]
+            lplike  = tf.reduce_sum(lp_like[-1])
+
+        # plot stuff
+        if self.debug and False:
+            plt.figure(figsize=(10,8))
+            plt.subplot(2,1,1)
+            plt.plot(lp_like[0][:,0,0])
+            plt.title('Likelihood')
+            plt.xlabel('Timeframe')
+            plt.ylabel('log prob')
+
+            plt.subplot(2, 1, 2)
+            plt.plot(lp_trans[0][:, 0, 0])
+            plt.title('Transition')
+            plt.xlabel('Timeframe')
+            plt.ylabel('log prob')
+            plt.show()
+
+        return lp_like, lp_trans,\
+               (lplike / tf.cast(NTB, lplike.dtype)).numpy(), \
+               (lptrans / tf.cast(NTB, lptrans.dtype)).numpy()
