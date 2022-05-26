@@ -1,4 +1,7 @@
 # stats271proj
+
+Class project for stats271. This is a work in progress. 
+
 Estimation for LQG observer. 
 
 - estimation/lqg_estim: contains the main script. 
